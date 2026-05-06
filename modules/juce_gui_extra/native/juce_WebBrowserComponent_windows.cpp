@@ -1055,8 +1055,25 @@ private:
             webView2ConstructionHelper.viewsWaitingForCreation.erase (this);
             webView2ConstructionHelper.webView2BeingCreated = this;
 
-            webViewHandle.environment->CreateCoreWebView2Controller ((HWND) peer->getNativeHandle(),
-                Callback<ICoreWebView2CreateCoreWebView2ControllerCompletedHandler> (
+            // Sonic Cascade patch (issue #43): enable AllowHostInputProcessing so
+            // WebView2 does not trap keyboard focus inside DAW hosts (Ableton's
+            // QWERTY-as-MIDI keyboard, Space transport, etc). Requires WebView2
+            // SDK 1.0.3351+ and runtime 1.0.1901.177+. Falls back to the
+            // original no-options creation path on older runtimes.
+            ComSmartPtr<ICoreWebView2Environment10> environment10;
+            webViewHandle.environment->QueryInterface (environment10.resetAndGetPointerAddress());
+
+            ComSmartPtr<ICoreWebView2ControllerOptions> controllerOptions;
+            if (environment10 != nullptr
+                && SUCCEEDED (environment10->CreateCoreWebView2ControllerOptions (controllerOptions.resetAndGetPointerAddress())))
+            {
+                ComSmartPtr<ICoreWebView2ControllerOptions4> controllerOptions4;
+                controllerOptions->QueryInterface (controllerOptions4.resetAndGetPointerAddress());
+                if (controllerOptions4 != nullptr)
+                    controllerOptions4->put_AllowHostInputProcessing (TRUE);
+            }
+
+            auto controllerCreatedCallback = Callback<ICoreWebView2CreateCoreWebView2ControllerCompletedHandler> (
                     [weakThis = WeakReference<WebView2> { this }] (HRESULT, ICoreWebView2Controller* controller) -> HRESULT
                     {
                         if (weakThis != nullptr)
@@ -1135,7 +1152,15 @@ private:
                         }
 
                         return S_OK;
-                    }).Get());
+                    });
+
+            if (environment10 != nullptr && controllerOptions != nullptr)
+                environment10->CreateCoreWebView2ControllerWithOptions ((HWND) peer->getNativeHandle(),
+                                                                         controllerOptions,
+                                                                         controllerCreatedCallback.Get());
+            else
+                webViewHandle.environment->CreateCoreWebView2Controller ((HWND) peer->getNativeHandle(),
+                                                                          controllerCreatedCallback.Get());
         }
     }
 
