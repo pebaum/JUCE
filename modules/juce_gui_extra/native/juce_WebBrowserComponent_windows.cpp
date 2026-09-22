@@ -35,6 +35,16 @@
 namespace juce
 {
 
+// Sonic Cascade patch (issue #43, and the 2026-09-21 Cubase-on-Windows
+// follow-up): whether WebView2 routes keyboard input THROUGH the host
+// application before handling it itself. TRUE is what Ableton Live needs (its
+// QWERTY-as-MIDI keyboard and Space transport must see keys first); but a host
+// that screens keys in its own message loop -- Cubase / Nuendo -- then keeps
+// every keystroke, so nothing typed ever reaches a text field in the WebView.
+// Defaults to TRUE (the original #43 behaviour). sc::SafeWebBrowser sets it per
+// host before any WebView2 controller is created.
+bool sonicCascadeWebView2AllowHostInputProcessing = true;
+
 struct WebBrowserComponent::Impl::Platform  : public PlatformInterface
 {
     class Win32WebView;
@@ -1055,11 +1065,13 @@ private:
             webView2ConstructionHelper.viewsWaitingForCreation.erase (this);
             webView2ConstructionHelper.webView2BeingCreated = this;
 
-            // Sonic Cascade patch (issue #43): enable AllowHostInputProcessing so
-            // WebView2 does not trap keyboard focus inside DAW hosts (Ableton's
-            // QWERTY-as-MIDI keyboard, Space transport, etc). Requires WebView2
-            // SDK 1.0.3351+ and runtime 1.0.1901.177+. Falls back to the
-            // original no-options creation path on older runtimes.
+            // Sonic Cascade patch (issue #43): AllowHostInputProcessing lets the
+            // host see keyboard input first (Ableton's QWERTY-as-MIDI keyboard,
+            // Space transport, etc). Host-controlled since 2026-09-21 via
+            // sonicCascadeWebView2AllowHostInputProcessing (see the top of this
+            // file). Requires WebView2 SDK 1.0.3351+ and runtime 1.0.1901.177+.
+            // Falls back to the original no-options creation path on older
+            // runtimes.
             ComSmartPtr<ICoreWebView2Environment10> environment10;
             webViewHandle.environment->QueryInterface (environment10.resetAndGetPointerAddress());
 
@@ -1070,7 +1082,7 @@ private:
                 ComSmartPtr<ICoreWebView2ControllerOptions4> controllerOptions4;
                 controllerOptions->QueryInterface (controllerOptions4.resetAndGetPointerAddress());
                 if (controllerOptions4 != nullptr)
-                    controllerOptions4->put_AllowHostInputProcessing (TRUE);
+                    controllerOptions4->put_AllowHostInputProcessing (sonicCascadeWebView2AllowHostInputProcessing ? TRUE : FALSE);
             }
 
             auto controllerCreatedCallback = Callback<ICoreWebView2CreateCoreWebView2ControllerCompletedHandler> (
