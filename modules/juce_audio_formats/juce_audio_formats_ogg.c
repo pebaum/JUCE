@@ -38,8 +38,9 @@
  #define JUCE_USE_OGGVORBIS 1
 #endif
 
+// Sonic Cascade patch: the same default as juce_audio_formats.h (off).
 #ifndef JUCE_USE_OPUS
- #define JUCE_USE_OPUS 1
+ #define JUCE_USE_OPUS 0
 #endif
 
 #if (JUCE_USE_OGGVORBIS && (JUCE_INCLUDE_OGGVORBIS_CODE || ! defined (JUCE_INCLUDE_OGGVORBIS_CODE))) \

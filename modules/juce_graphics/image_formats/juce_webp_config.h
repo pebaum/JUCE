@@ -32,8 +32,10 @@
   ==============================================================================
 */
 
+// Sonic Cascade patch: off unless a plugin asks for it -- the same default as
+// juce_graphics.h, which these C files cannot see.
 #ifndef JUCE_USE_WEBP
- #define JUCE_USE_WEBP 1
+ #define JUCE_USE_WEBP 0
 #endif
 
 #ifndef JUCE_INCLUDE_WEBPLIB_CODE

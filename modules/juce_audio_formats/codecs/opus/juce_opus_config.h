@@ -34,8 +34,10 @@
 
 #include <juce_core/system/juce_TargetPlatform.h>
 
+// Sonic Cascade patch: off unless a plugin asks for it -- the same default as
+// juce_audio_formats.h, which these C files cannot see (see that file).
 #ifndef JUCE_USE_OPUS
- #define JUCE_USE_OPUS 1
+ #define JUCE_USE_OPUS 0
 #endif
 
 #if JUCE_USE_OPUS && (JUCE_INCLUDE_OPUS_CODE || ! defined (JUCE_INCLUDE_OPUS_CODE))
