@@ -107,8 +107,11 @@
     If your app doesn't need to read or write Opus files, you might want to disable this to
     reduce the size of your codebase and build time.
 */
+// Sonic Cascade patch: off unless a plugin asks for it. Plugins that link their
+// own Opus (BOOTLEG, BUFFER, BRUME, ...) would otherwise run JUCE's copy instead
+// of theirs, silently: its symbols are plain C and the linker takes JUCE's.
 #ifndef JUCE_USE_OPUS
- #define JUCE_USE_OPUS 1
+ #define JUCE_USE_OPUS 0
 #endif
 
 /** Config: JUCE_INCLUDE_OPUS_CODE
@@ -131,8 +134,9 @@
     If your app doesn't need to read MP3 files, you might want to disable this to
     reduce the size of your codebase and build time.
 */
+// Sonic Cascade patch: off unless a plugin asks for it (JUCE 8's default).
 #ifndef JUCE_USE_MP3AUDIOFORMAT
- #define JUCE_USE_MP3AUDIOFORMAT 1
+ #define JUCE_USE_MP3AUDIOFORMAT 0
 #endif
 
 /** Config: JUCE_USE_LAME_AUDIO_FORMAT

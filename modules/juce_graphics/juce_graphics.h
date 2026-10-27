@@ -124,8 +124,9 @@
     If your app doesn't need to read or write WebP images, you might want to disable this to
     reduce the size of your binaries and build time.
 */
+// Sonic Cascade patch: off unless a plugin asks for it (JUCE 8 had no WebP).
 #ifndef JUCE_USE_WEBP
- #define JUCE_USE_WEBP 1
+ #define JUCE_USE_WEBP 0
 #endif
 
 /** Config: JUCE_INCLUDE_WEBPLIB_CODE
