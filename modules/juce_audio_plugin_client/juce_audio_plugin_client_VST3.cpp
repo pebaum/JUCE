@@ -2035,6 +2035,7 @@ private:
 
                 component = nullptr;
                 lastReportedSize.reset();
+                lastHostSize.reset();
             }
 
             viewRunLoop.reset();
@@ -2051,6 +2052,7 @@ private:
             }
 
             lastReportedSize.reset();
+            lastHostSize = *newSize;
 
             if (component == nullptr)
                 return kResultTrue;
@@ -2250,7 +2252,12 @@ private:
             const auto editorW = jlimit (minW, maxW, requestW * editorPerHostX);
             const auto editorH = jlimit (minH, maxH, requestH * editorPerHostY);
 
-            const auto current = owner->scaleManager.convertToHostBounds (component->getLocalBounds().toFloat());
+            // The window's size now, in host pixels: what the host last gave onSize. (JUCE 9's
+            // onSize sizes the editor, not the wrapper, so the wrapper's bounds lag until the host
+            // window itself moves; and the editor's own constrainer may have snapped its size.)
+            const auto current = lastHostSize.has_value()
+                               ? Rectangle<int> (lastHostSize->getWidth(), lastHostSize->getHeight())
+                               : owner->scaleManager.convertToHostBounds (component->getLocalBounds().toFloat());
             const auto widthMoved  = requestW != current.getWidth();
             const auto heightMoved = requestH != current.getHeight();
 
@@ -2496,6 +2503,7 @@ private:
         //==============================================================================
         std::optional<ScopedRunLoop> viewRunLoop;
         std::optional<ViewRect> lastReportedSize;
+        std::optional<ViewRect> lastHostSize;   // Sonic Cascade patch: the size the host last gave onSize
 
         VSTComSmartPtr<JuceVST3EditController> owner;
         AudioProcessor& pluginInstance;
