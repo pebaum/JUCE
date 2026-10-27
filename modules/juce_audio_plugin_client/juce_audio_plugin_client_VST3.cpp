@@ -2124,59 +2124,11 @@ private:
                     }
                     else if (auto* constrainer = editor->getConstrainer())
                     {
-                        const auto clientBounds = owner->scaleManager.convertFromHostBounds (createRectangle (*rectToCheck));
-                        const auto editorBounds = editor->getLocalArea (component.get(), clientBounds);
+                        const auto size = constrainHostSize (*editor, *constrainer,
+                                                             rectToCheck->getWidth(), rectToCheck->getHeight());
 
-                        auto minW = (float) constrainer->getMinimumWidth();
-                        auto maxW = (float) constrainer->getMaximumWidth();
-                        auto minH = (float) constrainer->getMinimumHeight();
-                        auto maxH = (float) constrainer->getMaximumHeight();
-
-                        auto width  = jlimit (minW, maxW, editorBounds.getWidth());
-                        auto height = jlimit (minH, maxH, editorBounds.getHeight());
-
-                        auto aspectRatio = (float) constrainer->getFixedAspectRatio();
-
-                        if (! approximatelyEqual (aspectRatio, 0.0f))
-                        {
-                            bool adjustWidth = (width / height > aspectRatio);
-
-                            if (detail::PluginUtilities::getHostType().type == PluginHostType::SteinbergCubase9)
-                            {
-                                auto currentEditorBounds = editor->getBounds().toFloat();
-
-                                if (approximatelyEqual (currentEditorBounds.getWidth(), width) && ! approximatelyEqual (currentEditorBounds.getHeight(), height))
-                                    adjustWidth = true;
-                                else if (approximatelyEqual (currentEditorBounds.getHeight(), height) && ! approximatelyEqual (currentEditorBounds.getWidth(), width))
-                                    adjustWidth = false;
-                            }
-
-                            if (adjustWidth)
-                            {
-                                width = height * aspectRatio;
-
-                                if (width > maxW || width < minW)
-                                {
-                                    width = jlimit (minW, maxW, width);
-                                    height = width / aspectRatio;
-                                }
-                            }
-                            else
-                            {
-                                height = width / aspectRatio;
-
-                                if (height > maxH || height < minH)
-                                {
-                                    height = jlimit (minH, maxH, height);
-                                    width = height * aspectRatio;
-                                }
-                            }
-                        }
-
-                        auto constrainedRect = component->getLocalArea (editor, Rectangle<float> (width, height));
-
-                        *rectToCheck = createViewRect (owner->scaleManager.convertToHostBounds (clientBounds.withWidth (constrainedRect.getWidth())
-                                                                                                            .withHeight (constrainedRect.getHeight())));
+                        rectToCheck->right  = rectToCheck->left + size.first;
+                        rectToCheck->bottom = rectToCheck->top  + size.second;
                     }
                 }
 
@@ -2228,6 +2180,114 @@ private:
         }
 
     private:
+        // Sonic Cascade patch: the size checkSizeConstraint answers with, in host pixels, for an editor
+        // that has a constrainer. The stock code fixed the aspect ratio in float and rounded the
+        // width and height on their own, so an answer passed back could come back one pixel
+        // smaller (the window crept while the user dragged it), and a drag on one edge returned
+        // the old size. Every answer here is the size for a whole number of host pixels on the
+        // LONGER side, with the shorter side rounded from it: the shorter side can then take every
+        // value, and each answer maps to itself, so an answer passed back comes back unchanged. A
+        // request that moves one edge follows that edge to the pixel. A request that moves both
+        // follows the one that moved less, so a drag out and back lands where it started, and a
+        // request that grows both (a maximise) is never exceeded.
+        // (JUCE 9: the editor-per-host-pixel ratio is read through scaleManager, which now owns
+        // the host <-> plugin conversion, instead of from the desktop scale.)
+        std::pair<int, int> constrainHostSize (const AudioProcessorEditor& editor,
+                                               const ComponentBoundsConstrainer& constrainer,
+                                               int requestW, int requestH) const
+        {
+            const auto unitClient = owner->scaleManager.convertFromHostBounds ({ 0, 0, 1000, 1000 });
+            const auto unit = editor.getLocalArea (component.get(), unitClient);
+            const auto editorPerHostX = (double) unit.getWidth()  / 1000.0;
+            const auto editorPerHostY = (double) unit.getHeight() / 1000.0;
+
+            const auto minW = (double) constrainer.getMinimumWidth();
+            const auto maxW = (double) constrainer.getMaximumWidth();
+            const auto minH = (double) constrainer.getMinimumHeight();
+            const auto maxH = (double) constrainer.getMaximumHeight();
+            const auto aspect = constrainer.getFixedAspectRatio();
+
+            const auto toHost = [&] (double editorW, double editorH)
+            {
+                return std::make_pair (roundToInt (editorW / editorPerHostX),
+                                       roundToInt (editorH / editorPerHostY));
+            };
+
+            if (approximatelyEqual (aspect, 0.0))
+                return toHost (jlimit (minW, maxW, requestW * editorPerHostX),
+                               jlimit (minH, maxH, requestH * editorPerHostY));
+
+            // The key is the longer side in host pixels. Its limits are whole host pixels inside the
+            // constrainer's limits on both sides, so the shorter side is always rounded from a key
+            // the limits allow, never from a limit that falls between two pixels.
+            const auto widthIsLong = aspect >= 1.0;
+            const auto keyPerEditor = 1.0 / (widthIsLong ? editorPerHostX : editorPerHostY);
+            const auto longMin = widthIsLong ? jmax (minW, minH * aspect) : jmax (minH, minW / aspect);
+            const auto longMax = widthIsLong ? jmin (maxW, maxH * aspect) : jmin (maxH, maxW / aspect);
+            const auto keyMin = (int) std::ceil  (longMin * keyPerEditor - 1.0e-6);
+            const auto keyMax = jmax (keyMin, (int) std::floor (longMax * keyPerEditor + 1.0e-6));
+
+            const auto sizeForKey = [&] (int key)
+            {
+                key = jlimit (keyMin, keyMax, key);
+
+                if (widthIsLong)
+                    return std::make_pair (key, roundToInt (key * editorPerHostX / aspect / editorPerHostY));
+
+                return std::make_pair (roundToInt (key * editorPerHostY * aspect / editorPerHostX), key);
+            };
+
+            const auto keyOf = [&] (std::pair<int, int> s) { return widthIsLong ? s.first : s.second; };
+
+            const auto keyForEditorWidth  = [&] (double w) { return roundToInt (widthIsLong ? w / editorPerHostX : w / aspect / editorPerHostY); };
+            const auto keyForEditorHeight = [&] (double h) { return roundToInt (widthIsLong ? h * aspect / editorPerHostX : h / editorPerHostY); };
+
+            const auto request = std::make_pair (requestW, requestH);
+
+            if (sizeForKey (keyOf (request)) == request)
+                return request;
+
+            const auto editorW = jlimit (minW, maxW, requestW * editorPerHostX);
+            const auto editorH = jlimit (minH, maxH, requestH * editorPerHostY);
+
+            const auto current = owner->scaleManager.convertToHostBounds (component->getLocalBounds().toFloat());
+            const auto widthMoved  = requestW != current.getWidth();
+            const auto heightMoved = requestH != current.getHeight();
+
+            if (widthMoved && ! heightMoved)
+                return sizeForKey (keyForEditorWidth (editorW));
+
+            if (heightMoved && ! widthMoved)
+                return sizeForKey (keyForEditorHeight (editorH));
+
+            // Both edges moved. When both grew or both shrank, follow the one that moved less, so a
+            // drag out and back is symmetric. When one grew and one shrank, fit inside the request.
+            const auto currentW = current.getWidth()  * editorPerHostX;
+            const auto currentH = current.getHeight() * editorPerHostY;
+            const auto grewW = requestW > current.getWidth();
+            const auto grewH = requestH > current.getHeight();
+
+            const auto followWidth = (grewW != grewH || currentW <= 0.0 || currentH <= 0.0)
+                                   ? editorW / editorH <= aspect
+                                   : std::abs (std::log (editorW / currentW)) <= std::abs (std::log (editorH / currentH));
+
+            auto result = sizeForKey (followWidth ? keyForEditorWidth (editorW) : keyForEditorHeight (editorH));
+
+            const auto mustFit = grewW || grewH;
+
+            for (int step = 0; mustFit && step < 4 && (result.first > requestW || result.second > requestH); ++step)
+            {
+                const auto smaller = sizeForKey (keyOf (result) - 1);
+
+                if (smaller == result)
+                    break;
+
+                result = smaller;
+            }
+
+            return result;
+        }
+
         std::optional<Vst::ParamID> findParameterImpl (int32 xPos, int32 yPos) const
         {
             auto* wrapper = component.get();
