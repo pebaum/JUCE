@@ -45,6 +45,31 @@ namespace juce
 // host before any WebView2 controller is created.
 bool sonicCascadeWebView2AllowHostInputProcessing = true;
 
+// Sonic Cascade patch (2026-10-29): upstream's Ableton Auto-Scale fix from JUCE 9,
+// back-ported to 8.0.12. Live's Auto-Scale Plug-In Window makes the plug-in's
+// thread DPI-unaware; creating WebView2 turns thread DPI awareness back on, so
+// later put_Bounds() calls no longer match what the WebView draws (a blank or
+// partly blank window until the next resize). The context is taken before
+// creation and restored in the completion handler. Loaded dynamically, as the
+// rest of 8.0.12 loads the per-thread DPI calls.
+extern void* getUser32Function (const char*);
+
+static DPI_AWARENESS_CONTEXT sonicCascadeGetThreadDpiAwarenessContext()
+{
+    using Func = DPI_AWARENESS_CONTEXT (WINAPI*) ();
+    static const auto func = (Func) getUser32Function ("GetThreadDpiAwarenessContext");
+    return func != nullptr ? func() : nullptr;
+}
+
+static void sonicCascadeSetThreadDpiAwarenessContext (DPI_AWARENESS_CONTEXT context)
+{
+    using Func = DPI_AWARENESS_CONTEXT (WINAPI*) (DPI_AWARENESS_CONTEXT);
+    static const auto func = (Func) getUser32Function ("SetThreadDpiAwarenessContext");
+
+    if (func != nullptr && context != nullptr)
+        func (context);
+}
+
 struct WebBrowserComponent::Impl::Platform  : public PlatformInterface
 {
     class Win32WebView;
@@ -1065,6 +1090,10 @@ private:
             webView2ConstructionHelper.viewsWaitingForCreation.erase (this);
             webView2ConstructionHelper.webView2BeingCreated = this;
 
+            // Taken before anything below touches WebView2 (the Ableton Auto-Scale
+            // fix, see the top of this file; restored in the completion handler).
+            const auto contextBeforeWebViewCreation = sonicCascadeGetThreadDpiAwarenessContext();
+
             // Sonic Cascade patch (issue #43): AllowHostInputProcessing lets the
             // host see keyboard input first (Ableton's QWERTY-as-MIDI keyboard,
             // Space transport, etc). Host-controlled since 2026-09-21 via
@@ -1086,10 +1115,12 @@ private:
             }
 
             auto controllerCreatedCallback = Callback<ICoreWebView2CreateCoreWebView2ControllerCompletedHandler> (
-                    [weakThis = WeakReference<WebView2> { this }] (HRESULT, ICoreWebView2Controller* controller) -> HRESULT
+                    [weakThis = WeakReference<WebView2> { this },
+                     contextBeforeWebViewCreation] (HRESULT, ICoreWebView2Controller* controller) -> HRESULT
                     {
                         if (weakThis != nullptr)
                         {
+                            sonicCascadeSetThreadDpiAwarenessContext (contextBeforeWebViewCreation);
                             weakThis->triggerAsyncUpdate();
                             webView2ConstructionHelper.webView2BeingCreated = nullptr;
 
