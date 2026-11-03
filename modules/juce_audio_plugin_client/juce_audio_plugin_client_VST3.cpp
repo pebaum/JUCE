@@ -2044,9 +2044,11 @@ private:
                 }
                #endif
 
+                hostSizeRequest.cancelPendingUpdate();
                 component = nullptr;
                 lastReportedSize.reset();
                 lastHostSize.reset();
+                lastSizeAskedAbout.reset();
             }
 
             viewRunLoop.reset();
@@ -2063,13 +2065,23 @@ private:
             }
 
             lastReportedSize.reset();
+
+            // Sonic Cascade patch: a host can set a size it never asked checkSizeConstraint about (a
+            // Mac title-bar double-click: Cubase zooms its window to the screen, then calls onSize).
+            // The editor takes the size checkSizeConstraint would have answered, and when that is not
+            // the size the host set, the host is asked for it (askHostForEditorSize), so the window
+            // never keeps empty bars beside the editor. A size checkSizeConstraint answered maps to
+            // itself, so a host that asks first sees no change. Fitted before lastHostSize moves: the
+            // answer depends on which edges moved since the last size.
+            const auto editorSize = fitHostSize (*newSize);
             lastHostSize = *newSize;
 
             if (component == nullptr)
                 return kResultTrue;
 
-            const auto rounded = owner->scaleManager.convertFromHostBounds (createRectangle (*newSize)).toNearestIntEdges();
+            const auto rounded = owner->scaleManager.convertFromHostBounds (createRectangle (editorSize)).toNearestIntEdges();
             component->onSize (rounded.getWidth(), rounded.getHeight());
+            askHostForEditorSize (*newSize);
 
            #if JUCE_MAC
             if (cubase10Workaround != nullptr)
@@ -2193,6 +2205,63 @@ private:
         }
 
     private:
+        // Sonic Cascade patch (onSize): the editor of a host-set size, as checkSizeConstraint would
+        // answer it. Only a resizable editor with a constrainer; any other gets the size as before.
+        ViewRect fitHostSize (ViewRect hostSize)
+        {
+            if (component != nullptr && canResize() == kResultTrue)
+            {
+                if (auto* editor = component->pluginEditor.get())
+                {
+                    if (auto* constrainer = editor->getConstrainer())
+                    {
+                        const auto size = constrainHostSize (*editor, *constrainer,
+                                                             hostSize.getWidth(), hostSize.getHeight());
+
+                        hostSize.right  = hostSize.left + size.first;
+                        hostSize.bottom = hostSize.top  + size.second;
+                    }
+                }
+            }
+
+            return hostSize;
+        }
+
+        // Sonic Cascade patch (onSize): when the editor did not take the size the host set, ask the
+        // host for the editor's size (after onSize returns: never resize from inside it). Once for
+        // each size the host sets, so a host that cannot give it and sets the same size again keeps
+        // its own.
+        void askHostForEditorSize (const ViewRect& hostSize)
+        {
+            if (component == nullptr || canResize() == kResultFalse)
+                return;
+
+            auto* editor = component->pluginEditor.get();
+
+            if (editor == nullptr || editor->getConstrainer() == nullptr)
+                return;
+
+            const auto taken = createViewRect (owner->scaleManager.convertToHostBounds (component->getSizeToContainChild()
+                                                                                                 .withZeroOrigin()
+                                                                                                 .toFloat()));
+            const auto sameSize = [] (const ViewRect& a, const ViewRect& b)
+            {
+                return a.getWidth() == b.getWidth() && a.getHeight() == b.getHeight();
+            };
+
+            if (sameSize (taken, hostSize))
+            {
+                lastSizeAskedAbout.reset();
+                return;
+            }
+
+            if (lastSizeAskedAbout.has_value() && sameSize (*lastSizeAskedAbout, hostSize))
+                return;
+
+            lastSizeAskedAbout = hostSize;
+            hostSizeRequest.triggerAsyncUpdate();
+        }
+
         // Sonic Cascade patch: the size checkSizeConstraint answers with, in host pixels, for an editor
         // that has a constrainer. The stock code fixed the aspect ratio in float and rounded the
         // width and height on their own, so an answer passed back could come back one pixel
@@ -2515,6 +2584,24 @@ private:
         std::optional<ScopedRunLoop> viewRunLoop;
         std::optional<ViewRect> lastReportedSize;
         std::optional<ViewRect> lastHostSize;   // Sonic Cascade patch: the size the host last gave onSize
+
+        // Sonic Cascade patch: asks the host for the editor's size, after an onSize the editor could
+        // not fill (askHostForEditorSize).
+        struct HostSizeRequest final : public AsyncUpdater
+        {
+            explicit HostSizeRequest (JuceVST3Editor& o)  : owner (o) {}
+
+            void handleAsyncUpdate() override
+            {
+                if (owner.component != nullptr)
+                    owner.component->resizeHostWindow();
+            }
+
+            JuceVST3Editor& owner;
+        };
+
+        HostSizeRequest hostSizeRequest { *this };
+        std::optional<ViewRect> lastSizeAskedAbout;
 
         VSTComSmartPtr<JuceVST3EditController> owner;
         AudioProcessor& pluginInstance;
