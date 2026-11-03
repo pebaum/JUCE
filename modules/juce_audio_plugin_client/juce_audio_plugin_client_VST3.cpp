@@ -904,23 +904,32 @@ public:
         Param (JuceVST3EditController& editController, AudioProcessorParameter& p,
                Vst::ParamID vstParamID, Vst::UnitID vstUnitID,
                bool isBypassParameter)
-            : owner (editController), param (p)
+            : owner (editController), param (p), isBypass (isBypassParameter)
         {
             info.id = vstParamID;
             info.unitId = vstUnitID;
 
             updateParameterInfo();
 
-            // Is this a meter?
-            if ((((unsigned int) param.getCategory() & 0xffff0000) >> 16) == 2)
-                info.flags = Vst::ParameterInfo::kIsReadOnly;
-            else
-                info.flags = param.isAutomatable() ? Vst::ParameterInfo::kCanAutomate : 0;
-
-            if (isBypassParameter)
-                info.flags |= Vst::ParameterInfo::kIsBypass;
-
             valueNormalized = info.defaultNormalizedValue;
+        }
+
+        // Sonic Cascade: the flags are worked out here, and again by every
+        // updateParameterInfo(), so a parameter whose isAutomatable() changes
+        // at runtime reaches the host with kParamTitlesChanged ("titles, default
+        // values or flags have changed"). Stock JUCE set them once, in the
+        // constructor.
+        Steinberg::int32 getFlags() const
+        {
+            // Is this a meter?
+            auto flags = ((((unsigned int) param.getCategory() & 0xffff0000) >> 16) == 2)
+                       ? (Steinberg::int32) Vst::ParameterInfo::kIsReadOnly
+                       : (Steinberg::int32) (param.isAutomatable() ? Vst::ParameterInfo::kCanAutomate : 0);
+
+            if (isBypass)
+                flags |= Vst::ParameterInfo::kIsBypass;
+
+            return flags;
         }
 
         bool updateParameterInfo()
@@ -955,6 +964,7 @@ public:
             anyUpdated |= updateParamIfChanged (info.units, param.getLabel());
             anyUpdated |= updateParamIfScalarChanged (info.stepCount, newStepCount);
             anyUpdated |= updateParamIfScalarChanged (info.defaultNormalizedValue, (double) param.getDefaultValue());
+            anyUpdated |= updateParamIfScalarChanged (info.flags, getFlags());
 
             jassert (0 <= info.defaultNormalizedValue && info.defaultNormalizedValue <= 1.0);
 
@@ -1013,6 +1023,7 @@ public:
     private:
         JuceVST3EditController& owner;
         AudioProcessorParameter& param;
+        const bool isBypass;
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (Param)
     };
