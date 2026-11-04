@@ -2974,12 +2974,23 @@ public:
                              sizeof (uint64));
 
                 privateDataSize = ByteOrder::swapIfBigEndian (privateDataSize);
-                size -= privateDataSize + jucePrivDataIdentifierSize + sizeof (uint64);
 
-                if (privateDataSize > 0)
-                    setJucePrivateStateInformation (buffer + size, static_cast<int> (privateDataSize));
+                // The size comes from a file, which may be damaged. A section is [int64 0]
+                // [private data] [int64 size] [identifier], and a size that does not fit in
+                // the block cannot say where the plug-in's state ends. Pass on the whole
+                // block, as a build that does not know this section would: the plug-in's
+                // own state still loads, and only the private data is lost.
+                const auto sectionOverhead = jucePrivDataIdentifierSize + 2 * sizeof (uint64);
 
-                size -= sizeof (uint64);
+                if (size >= sectionOverhead && privateDataSize <= size - sectionOverhead)
+                {
+                    size -= privateDataSize + jucePrivDataIdentifierSize + sizeof (uint64);
+
+                    if (privateDataSize > 0)
+                        setJucePrivateStateInformation (buffer + size, static_cast<int> (privateDataSize));
+
+                    size -= sizeof (uint64);
+                }
             }
         }
 
